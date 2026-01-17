@@ -1,67 +1,69 @@
-import { statusRepository } from "../db/repositories/statusRepository";
 import { sessionRepository } from "../db/repositories/sessionRepository";
 
 const GAP_THRESHOLD_MINUTES = 3;
 
 export class SessionAggregator {
+  private lastStatus: "online" | "offline" | null = null;
+  private lastOfflineTime: Date | null = null;
+
   async processStatus(
     currentStatus: "online" | "offline",
     timestamp: Date
   ): Promise<void> {
     console.log(
-      `📊 Processing status: ${currentStatus} at ${timestamp.toISOString()}`
+      `📊 [${timestamp.toLocaleTimeString("ru-RU")}] Status: ${currentStatus}`
     );
 
-    const lastCheck = await statusRepository.getLatestStatus();
     const activeSession = await sessionRepository.getActiveSession();
 
     if (currentStatus === "online") {
       if (!activeSession) {
-        // No active session, start new one
-        console.log("🟢 Starting new session");
-        await sessionRepository.createSession(timestamp);
-      } else if (lastCheck?.status === "offline") {
-        // Was offline, check gap
-        const lastCheckTime = new Date(lastCheck.checked_at);
+        // Нет активной сессии → создать новую
+        const sessionId = await sessionRepository.createSession(timestamp);
+        console.log(`🟢 Новая сессия #${sessionId} начата`);
+      } else if (this.lastStatus === "offline" && this.lastOfflineTime) {
+        // Был offline, проверяем гэп
         const gapMinutes =
-          (timestamp.getTime() - lastCheckTime.getTime()) / 60000;
+          (timestamp.getTime() - this.lastOfflineTime.getTime()) / 60000;
 
-        if (gapMinutes > GAP_THRESHOLD_MINUTES) {
-          // Gap > 3 min, close old session and start new
+        if (gapMinutes <= GAP_THRESHOLD_MINUTES) {
+          // Гэп ≤ 3 мин → продолжаем сессию
+          await sessionRepository.updateLastSeen(activeSession.id, timestamp);
           console.log(
-            `⏸️  Gap of ${gapMinutes.toFixed(
-              1
-            )} min > ${GAP_THRESHOLD_MINUTES} min: closing session and starting new`
+            `⏩ Сессия #${
+              activeSession.id
+            } продолжена (гэп ${gapMinutes.toFixed(1)} мин)`
           );
-          await sessionRepository.updateSession(
-            activeSession.id,
-            lastCheckTime
-          );
-          await sessionRepository.createSession(timestamp);
         } else {
-          // Gap ≤ 3 min, continue session
-          console.log(
-            `⏩ Gap of ${gapMinutes.toFixed(
-              1
-            )} min ≤ ${GAP_THRESHOLD_MINUTES} min: continuing session`
+          // Гэп > 3 мин → закрываем старую, создаем новую
+          await sessionRepository.closeSession(
+            activeSession.id,
+            this.lastOfflineTime
           );
+          const sessionId = await sessionRepository.createSession(timestamp);
+          console.log(
+            `⏸️  Сессия #${activeSession.id} закрыта (гэп ${gapMinutes.toFixed(
+              1
+            )} мин)`
+          );
+          console.log(`🟢 Новая сессия #${sessionId} начата`);
         }
       } else {
-        // Still online, continue session
-        console.log("🟢 Still online, continuing session");
+        // Все еще online → обновляем last_seen
+        await sessionRepository.updateLastSeen(activeSession.id, timestamp);
+        console.log(`🟢 Сессия #${activeSession.id} активна`);
       }
     } else {
-      // Status is offline
-      if (activeSession && lastCheck?.status === "online") {
-        console.log("⚪️ User went offline, marking time");
-      } else {
-        console.log("⚪️ Still offline");
+      // Статус offline
+      if (activeSession && this.lastStatus === "online") {
+        console.log(
+          `⚪️ Пользователь offline (сессия #${activeSession.id} ожидает)`
+        );
       }
-      // Don't close session yet - will close only if next online > 3min gap
+      this.lastOfflineTime = timestamp;
     }
 
-    // Save status check
-    await statusRepository.saveStatusCheck(currentStatus, timestamp);
+    this.lastStatus = currentStatus;
   }
 
   async getCurrentStatus(): Promise<{
@@ -69,42 +71,51 @@ export class SessionAggregator {
     since?: Date;
     lastSeen?: Date;
   }> {
-    const lastCheck = await statusRepository.getLatestStatus();
     const activeSession = await sessionRepository.getActiveSession();
 
-    if (!lastCheck) {
-      return { status: "offline" };
-    }
-
-    if (lastCheck.status === "online" && activeSession) {
+    if (activeSession && this.lastStatus === "online") {
       return {
         status: "online",
         since: new Date(activeSession.session_start),
       };
+    } else if (activeSession) {
+      return {
+        status: "offline",
+        lastSeen: new Date(activeSession.last_seen),
+      };
     } else {
       return {
         status: "offline",
-        lastSeen: new Date(lastCheck.checked_at),
+        lastSeen: this.lastOfflineTime || undefined,
       };
     }
   }
 
   async getStats(hours: number): Promise<{
-    sessions: Array<{ start: Date; end: Date; duration: number }>;
+    sessions: Array<{ start: Date; end: Date | null; duration: number | null }>;
     totalMinutes: number;
   }> {
-    const sessions = await sessionRepository.getSessionsForPeriod(hours);
+    const sessions = await sessionRepository.getAllSessionsForPeriod(hours);
 
     const formattedSessions = sessions.map((s) => ({
       start: new Date(s.session_start),
-      end: s.session_end ? new Date(s.session_end) : new Date(),
-      duration: s.duration_minutes || 0,
+      end: s.session_end ? new Date(s.session_end) : null,
+      duration: s.duration_minutes,
     }));
 
-    const totalMinutes = formattedSessions.reduce(
-      (sum, s) => sum + s.duration,
-      0
-    );
+    const totalMinutes = formattedSessions.reduce((sum, s) => {
+      if (s.duration !== null) {
+        return sum + s.duration;
+      } else if (s.end === null) {
+        // Активная сессия - считаем до сейчас
+        const now = new Date();
+        const duration = Math.round(
+          (now.getTime() - s.start.getTime()) / 60000
+        );
+        return sum + duration;
+      }
+      return sum;
+    }, 0);
 
     return {
       sessions: formattedSessions,

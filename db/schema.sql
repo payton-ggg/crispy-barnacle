@@ -1,18 +1,9 @@
--- Status checks table: raw polling data
-CREATE TABLE IF NOT EXISTS status_checks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  checked_at TIMESTAMP NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('online', 'offline')),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_status_checks_checked_at ON status_checks(checked_at);
-
--- Online sessions table: aggregated intervals
+-- Online sessions: только интервалы когда пользователь был в сети
 CREATE TABLE IF NOT EXISTS online_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_start TIMESTAMP NOT NULL,
-  session_end TIMESTAMP,
+  last_seen TIMESTAMP NOT NULL,  -- последний раз когда видели онлайн
+  session_end TIMESTAMP,  -- NULL если сессия активна
   duration_minutes INTEGER,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

@@ -5,7 +5,6 @@ import { checkUserStatus } from "./mtproto/tracker";
 import { initBot } from "./bot/bot";
 import { sessionAggregator } from "./services/sessionAggregator";
 import { notifyOnline, shouldNotify } from "./services/notifier";
-import { statusRepository } from "./db/repositories/statusRepository";
 
 dotenv.config();
 
@@ -13,6 +12,7 @@ const MIN_POLL_INTERVAL = 60 * 1000; // 60 seconds
 const MAX_POLL_INTERVAL = 120 * 1000; // 120 seconds
 
 let isRunning = false;
+let lastNotifiedStatus: "online" | "offline" | null = null;
 
 function getRandomInterval(): number {
   return Math.floor(
@@ -27,68 +27,63 @@ async function pollStatus(): Promise<void> {
     const timestamp = new Date();
     const status = await checkUserStatus();
 
-    console.log(
-      `\n⏰ ${timestamp.toLocaleString("ru-RU")} - Status: ${status}`
-    );
-
-    // Get last status for notification check
-    const lastCheck = await statusRepository.getLatestStatus();
-    const lastStatus = lastCheck?.status || null;
-
-    // Process status through aggregator
+    // Обработка статуса
     await sessionAggregator.processStatus(status, timestamp);
 
-    // Send notification if needed
-    if (await shouldNotify(status, lastStatus)) {
+    // Отправка уведомления при переходе offline → online
+    if (await shouldNotify(status, lastNotifiedStatus)) {
       await notifyOnline(timestamp);
     }
+    lastNotifiedStatus = status;
   } catch (error) {
-    console.error("Error polling status:", error);
+    console.error("❌ Error polling status:", error);
   }
 
-  // Schedule next poll
+  // Следующая проверка
   if (isRunning) {
     const nextInterval = getRandomInterval();
-    console.log(`⏳ Next check in ${Math.round(nextInterval / 1000)} seconds`);
+    console.log(
+      `⏳ Следующая проверка через ${Math.round(nextInterval / 1000)} сек\n`
+    );
     setTimeout(pollStatus, nextInterval);
   }
 }
 
 async function main(): Promise<void> {
-  console.log("🚀 Starting Telegram Status Tracker...\n");
+  console.log("🚀 Telegram Status Tracker\n");
 
   try {
-    // Initialize database
+    // Инициализация БД
     await initDatabase();
 
-    // Initialize MTProto client
+    // Инициализация MTProto
     await initMTProtoClient();
 
-    // Initialize bot
+    // Инициализация бота
     initBot();
 
-    // Start polling
+    // Старт polling
     isRunning = true;
-    console.log("\n📡 Starting status polling...\n");
+    console.log("\n📡 Мониторинг запущен\n");
+    console.log("━".repeat(50));
     await pollStatus();
 
-    // Handle graceful shutdown
+    // Graceful shutdown
     process.on("SIGINT", async () => {
-      console.log("\n\n🛑 Shutting down gracefully...");
+      console.log("\n\n🛑 Остановка...");
       isRunning = false;
       process.exit(0);
     });
 
     process.on("SIGTERM", async () => {
-      console.log("\n\n🛑 Shutting down gracefully...");
+      console.log("\n\n🛑 Остановка...");
       isRunning = false;
       process.exit(0);
     });
   } catch (error) {
-    console.error("Fatal error:", error);
+    console.error("💥 Критическая ошибка:", error);
     process.exit(1);
   }
 }
 
-// Start the application
 main();

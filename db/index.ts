@@ -11,26 +11,12 @@ export const db = createClient({
 export async function initDatabase() {
   console.log("🗄️  Initializing database...");
 
-  // Create status_checks table
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS status_checks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      checked_at TIMESTAMP NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('online', 'offline')),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.execute(`
-    CREATE INDEX IF NOT EXISTS idx_status_checks_checked_at 
-    ON status_checks(checked_at)
-  `);
-
   // Create online_sessions table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS online_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_start TIMESTAMP NOT NULL,
+      last_seen TIMESTAMP NOT NULL,
       session_end TIMESTAMP,
       duration_minutes INTEGER,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
