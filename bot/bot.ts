@@ -12,7 +12,24 @@ export let bot: TelegramBot;
 export function initBot(): TelegramBot {
   console.log("🤖 Initializing Telegram bot...");
 
+  if (!token) {
+    throw new Error("BOT_TOKEN not found in .env file");
+  }
+
+  console.log(`Using bot token: ${token.substring(0, 10)}...`);
+
   bot = new TelegramBot(token, { polling: true });
+
+  // Handle polling errors
+  bot.on("polling_error", (error) => {
+    console.error("Bot polling error:", error.message);
+    if (error.message.includes("401")) {
+      console.error(
+        "❌ Bot token is invalid! Please check your BOT_TOKEN in .env"
+      );
+      console.error("Get a new token from @BotFather on Telegram");
+    }
+  });
 
   // Setup commands
   setupCommands(bot);
