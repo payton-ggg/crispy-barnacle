@@ -6,6 +6,21 @@ import { initBot } from "./bot/bot";
 import { sessionAggregator } from "./services/sessionAggregator";
 import { notifyOnline, shouldNotify } from "./services/notifier";
 
+import http from "http";
+
+function startHttpServer() {
+  const port = Number(process.env.PORT) || 8080;
+
+  http
+    .createServer((_, res) => {
+      res.writeHead(200);
+      res.end("OK");
+    })
+    .listen(port, "0.0.0.0", () => {
+      console.log(`🌐 HTTP server listening on ${port}`);
+    });
+}
+
 dotenv.config();
 
 const MIN_POLL_INTERVAL = 60 * 1000; // 60 seconds
@@ -53,13 +68,12 @@ async function main(): Promise<void> {
   console.log("🚀 Telegram Status Tracker\n");
 
   try {
-    // Инициализация БД
+    startHttpServer();
+
     await initDatabase();
 
-    // Инициализация MTProto
     await initMTProtoClient();
 
-    // Инициализация бота
     initBot();
 
     // Старт polling
